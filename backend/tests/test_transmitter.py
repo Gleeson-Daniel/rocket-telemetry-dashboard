@@ -115,6 +115,7 @@ class LiveTransmitter:
         )
         self.pipeline = TelemetryPipeline()
         self.address = None
+        self.last = None  # the newest reading accepted so far
 
     def close(self):
         self.process.kill()
@@ -124,7 +125,10 @@ class LiveTransmitter:
     def read(self):
         """Receives one packet and returns (reading, transition) or None."""
         data, self.address = self.socket.recvfrom(1024)
-        return self.pipeline.process(data)
+        result = self.pipeline.process(data)
+        if result is not None:
+            self.last = result[0]
+        return result
 
     def send(self, command, spec=None):
         self.socket.sendto(encode_command(command, spec), self.address)
@@ -214,8 +218,11 @@ def test_pause_freezes_the_flight_and_resume_carries_on(transmitter):
     transmitter.send(COMMAND_LAUNCH, RocketSpec())
     transmitter.read_until("COAST")
 
+    # The pause may take effect before another packet is sent, so the last
+    # reading before the silence can be one that arrived before the command.
     transmitter.send(COMMAND_PAUSE)
-    before = drain(transmitter)[-1]
+    drain(transmitter)
+    before = transmitter.last
     assert drain(transmitter, quiet_for=0.5) == []  # silent while paused
 
     transmitter.send(COMMAND_RESUME)
