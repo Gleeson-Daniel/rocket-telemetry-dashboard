@@ -1,114 +1,80 @@
+import { useMemo, useState } from 'react'
 import { useTelemetry } from './hooks/useTelemetry'
+import type { StationStatus } from './hooks/useTelemetry'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend
-} from 'recharts'
+  currentFlight, flightName, groundTrack, launchTimestamp, nearestIndex, verticalSpeed,
+} from './flight'
+import Controls from './components/Controls'
+import Headline from './components/Headline'
+import FlightCharts from './components/FlightCharts'
+import GroundTrack from './components/GroundTrack'
+import EventLog from './components/EventLog'
+import { LinkReadouts, SensorReadouts } from './components/Readouts'
 
-function StatusCard({ label, value, unit, color }: {
-  label: string; value: string | number; unit: string; color: string
-}) {
-  return (
-    <div style={{
-      background: '#13161e', border: '1px solid #1e2230',
-      borderTop: `3px solid ${color}`, borderRadius: 10,
-      padding: '16px 20px', minWidth: 140
-    }}>
-      <div style={{ fontSize: 11, color: '#6b7391', marginBottom: 6,
-        fontFamily: 'monospace', textTransform: 'uppercase' }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 600, color: '#fff' }}>
-        {value}<span style={{ fontSize: 13, color: '#6b7391',
-          marginLeft: 4 }}>{unit}</span>
-      </div>
-    </div>
-  )
+// What the page is showing right now. Each state has its own icon as well as
+// its own colour, so it can be read without relying on colour.
+function describe(connected: boolean, status: StationStatus | null) {
+  if (!connected || !status) return { kind: 'critical', icon: '✕', text: 'Backend offline' }
+  if (status.paused) return { kind: 'warning', icon: 'Ⅱ', text: 'Paused' }
+  if (status.source.mode === 'replay') {
+    return { kind: 'info', icon: '▶', text: `Replaying ${status.source.name}` }
+  }
+  if (status.transmitter_connected) return { kind: 'good', icon: '✓', text: 'Receiving telemetry' }
+  return { kind: 'critical', icon: '!', text: 'No signal from the transmitter' }
 }
 
 export default function App() {
-  const { readings, latest, connected } = useTelemetry()
+  const {
+    readings, latest, transitions, link, summary, status, connected, refreshStatus,
+  } = useTelemetry()
+  const [hoverTime, setHoverTime] = useState<number | null>(null)
 
-  const chartData = readings.map(r => ({
-    time: new Date(r.timestamp).toLocaleTimeString(),
-    altitude: r.altitude_m,
-    temperature: r.temperature_c,
-    pressure: r.pressure_hpa,
-  }))
+  const flight = useMemo(() => currentFlight(readings), [readings])
+  const launchedAt = useMemo(() => launchTimestamp(flight), [flight])
+  const track = useMemo(() => groundTrack(flight), [flight])
+
+  // Seconds from launch once there has been one; before that, seconds
+  // before now, so the pad wait reads as a scrolling window.
+  const times = useMemo(() => {
+    const zero = launchedAt ?? flight[flight.length - 1]?.timestamp ?? 0
+    return flight.map(r => (r.timestamp - zero) / 1000)
+  }, [flight, launchedAt])
+  const hoverIndex = hoverTime != null && times.length ? nearestIndex(times, hoverTime) : null
+
+  const launchIndex = launchedAt != null
+    ? flight.findIndex(r => r.timestamp >= launchedAt) : null
+  const position = track?.[track.length - 1]
+  const distance = position ? Math.hypot(position.east, position.north) : null
+  const state = describe(connected, status)
 
   return (
-    <div style={{ background: '#0a0b0f', minHeight: '100vh',
-      color: '#d8dce8', padding: 28, fontFamily: 'DM Sans, sans-serif' }}>
-
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between',
-        alignItems: 'center', marginBottom: 28 }}>
-        <div>
-          <div style={{ fontSize: 11, fontFamily: 'monospace',
-            color: '#6b7391', marginBottom: 4 }}>ROCKET TELEMETRY SYSTEM</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#fff',
-            margin: 0 }}>Live Dashboard</h1>
+    <div className="app">
+      <header className="topbar">
+        <h1>Rocket ground station</h1>
+        <span className="source">{flightName(latest?.flight_id)}</span>
+        <div className={`status status-${state.kind}`} role="status">
+          <span className="status-icon" aria-hidden="true">{state.icon}</span>
+          {state.text}
         </div>
-        <div style={{
-          padding: '6px 14px', borderRadius: 999,
-          background: connected ? 'rgba(52,211,153,0.1)' : 'rgba(251,113,133,0.1)',
-          border: `1px solid ${connected ? 'rgba(52,211,153,0.3)' : 'rgba(251,113,133,0.3)'}`,
-          color: connected ? '#34d399' : '#fb7185',
-          fontSize: 12, fontFamily: 'monospace'
-        }}>
-          {connected ? '● LIVE' : '○ CONNECTING'}
-        </div>
-      </div>
+      </header>
 
-      {/* Status Cards */}
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 28 }}>
-        <StatusCard label="Altitude" value={latest?.altitude_m.toFixed(1) ?? '--'} unit="m" color="#38bdf8" />
-        <StatusCard label="Temperature" value={latest?.temperature_c.toFixed(1) ?? '--'} unit="°C" color="#f97316" />
-        <StatusCard label="Pressure" value={latest?.pressure_hpa.toFixed(1) ?? '--'} unit="hPa" color="#a78bfa" />
-        <StatusCard label="Battery" value={latest?.battery_v.toFixed(2) ?? '--'} unit="V" color={
-          (latest?.battery_v ?? 4) > 3.7 ? '#34d399' : '#fb7185'
-        } />
-        <StatusCard label="Accel Z" value={latest?.imu_accel_z.toFixed(3) ?? '--'} unit="m/s²" color="#fbbf24" />
-      </div>
+      <div className="layout">
+        <aside className="sidebar">
+          <Controls status={status} onChange={refreshStatus} />
+          <SensorReadouts latest={latest} verticalSpeed={verticalSpeed(flight)}
+            distance={distance} />
+          <LinkReadouts link={link} />
+        </aside>
 
-      {/* Altitude Chart */}
-      <div style={{ background: '#111318', border: '1px solid #1e2230',
-        borderRadius: 10, padding: '20px 16px', marginBottom: 20 }}>
-        <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#6b7391',
-          marginBottom: 16 }}>ALTITUDE · {readings.length} readings</div>
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e2230" />
-            <XAxis dataKey="time" tick={{ fill: '#6b7391', fontSize: 10 }}
-              interval="preserveStartEnd" />
-            <YAxis tick={{ fill: '#6b7391', fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: '#111318',
-              border: '1px solid #1e2230', borderRadius: 6 }} />
-            <Line type="monotone" dataKey="altitude" stroke="#38bdf8"
-              dot={false} strokeWidth={2} name="Altitude (m)" />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Temperature + Pressure Chart */}
-      <div style={{ background: '#111318', border: '1px solid #1e2230',
-        borderRadius: 10, padding: '20px 16px' }}>
-        <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#6b7391',
-          marginBottom: 16 }}>TEMPERATURE & PRESSURE</div>
-        <ResponsiveContainer width="100%" height={180}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e2230" />
-            <XAxis dataKey="time" tick={{ fill: '#6b7391', fontSize: 10 }}
-              interval="preserveStartEnd" />
-            <YAxis yAxisId="temp" tick={{ fill: '#f97316', fontSize: 10 }} />
-            <YAxis yAxisId="pres" orientation="right"
-              tick={{ fill: '#a78bfa', fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: '#111318',
-              border: '1px solid #1e2230', borderRadius: 6 }} />
-            <Legend />
-            <Line yAxisId="temp" type="monotone" dataKey="temperature"
-              stroke="#f97316" dot={false} strokeWidth={2} name="Temp (°C)" />
-            <Line yAxisId="pres" type="monotone" dataKey="pressure"
-              stroke="#a78bfa" dot={false} strokeWidth={2} name="Pressure (hPa)" />
-          </LineChart>
-        </ResponsiveContainer>
+        <main className="main">
+          <Headline flight={flight} launchedAt={launchedAt} summary={summary} />
+          <FlightCharts flight={flight} times={times} launched={launchedAt != null}
+            hoverIndex={hoverIndex} onHover={setHoverTime} />
+          <div className="lower">
+            <GroundTrack track={track} launchIndex={launchIndex} hoverIndex={hoverIndex} />
+            <EventLog transitions={transitions} />
+          </div>
+        </main>
       </div>
     </div>
   )

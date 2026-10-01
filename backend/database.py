@@ -17,6 +17,16 @@ class Database:
                 data TEXT
             )
         """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS phase_transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER,
+                flight_id INTEGER,
+                from_phase TEXT,
+                to_phase TEXT,
+                altitude_m REAL
+            )
+        """)
         self.conn.commit()
 
     def save(self, data: dict):
@@ -31,4 +41,24 @@ class Database:
             "SELECT data FROM readings ORDER BY id DESC LIMIT ?", (limit,)
         )
         rows = [json.loads(row[0]) for row in cursor.fetchall()]
+        return list(reversed(rows))
+
+    def save_transition(self, transition: dict):
+        self.conn.execute(
+            "INSERT INTO phase_transitions"
+            " (timestamp, flight_id, from_phase, to_phase, altitude_m)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (transition["timestamp"], transition["flight_id"],
+             transition["from_phase"], transition["to_phase"],
+             transition["altitude_m"])
+        )
+        self.conn.commit()
+
+    def get_transitions(self, limit: int = 50) -> list:
+        cursor = self.conn.execute(
+            "SELECT timestamp, flight_id, from_phase, to_phase, altitude_m"
+            " FROM phase_transitions ORDER BY id DESC LIMIT ?", (limit,)
+        )
+        keys = ("timestamp", "flight_id", "from_phase", "to_phase", "altitude_m")
+        rows = [dict(zip(keys, row)) for row in cursor.fetchall()]
         return list(reversed(rows))

@@ -7,8 +7,20 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+      - "9000:9000/udp"
     volumes:
       - ./backend:/app
+
+  transmitter:
+    build:
+      context: ./transmitter
+      dockerfile: Dockerfile
+    # About 1% of packets are corrupted, dropped or reordered to imitate a
+    # lossy radio link, so the dashboard's link counters have something to show.
+    command: ["--host", "backend", "--port", "9000",
+              "--corrupt", "0.01", "--drop", "0.01", "--reorder", "0.01"]
+    depends_on:
+      - backend
 
   frontend:
     build:

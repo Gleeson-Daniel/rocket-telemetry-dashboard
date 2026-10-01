@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/venv/
+
+# Recorded telemetry
+backend/telemetry.db
+
+# C++ build output
+transmitter/build/
